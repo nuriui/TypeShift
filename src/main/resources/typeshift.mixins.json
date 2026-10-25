@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "com.teashoe.typeshift.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["ChatScreenAccessor", "ChatInputMixin"],
+  "injectors": { "defaultRequire": 1 }
+}

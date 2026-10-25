@@ -1,0 +1,59 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version '1.17.9'
+    id 'maven-publish'
+}
+version = project.mod_version
+group = project.maven_group
+base { archivesName = project.archives_base_name }
+repositories { mavenCentral(); maven { url = 'https://maven.terraformersmc.com/releases/' } }
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    compileOnly 'com.terraformersmc:modmenu:21.0.0'
+    if (project.hasProperty('smokeTest') && !project.hasProperty('withoutModMenu')) runtimeOnly 'com.terraformersmc:modmenu:21.0.0'
+    testImplementation platform('org.junit:junit-bom:5.12.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+processResources {
+    inputs.properties(version: project.version, minecraft_version: project.minecraft_version, loader_version: project.loader_version)
+    filesMatching('fabric.mod.json') {
+        expand(version: project.version, minecraft_version: project.minecraft_version, loader_version: project.loader_version)
+    }
+}
+java { withSourcesJar() }
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+test { useJUnitPlatform() }
+jar { from('LICENSE.txt', 'NOTICE.md') }
+
+if (project.hasProperty('smokeTest')) {
+    tasks.matching { it.name == 'runSmokeClient' }.configureEach {
+        doFirst {
+            delete file('build/smoke-run/config/typeshift-words.properties')
+            delete file('build/smoke-run/smoke-result.txt')
+        }
+    }
+    sourceSets {
+        smokeTest {
+            compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+            runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+        }
+    }
+    loom {
+        mods {
+            typeshift { sourceSet sourceSets.main }
+            typeshift_smoke { sourceSet sourceSets.smokeTest }
+        }
+        runs {
+            smokeClient {
+                client()
+                source sourceSets.smokeTest
+                runDir 'build/smoke-run'
+            }
+        }
+    }
+}

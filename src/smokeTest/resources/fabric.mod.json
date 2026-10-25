@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "typeshift_smoke",
+  "version": "1.0.0",
+  "name": "TypeShift development smoke tests",
+  "environment": "client",
+  "entrypoints": {"client": ["com.teashoe.typeshift.smoke.ClientSmokeTest"]},
+  "depends": {"typeshift": "*"}
+}

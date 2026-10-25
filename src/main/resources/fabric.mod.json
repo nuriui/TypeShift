@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "typeshift",
+  "version": "${version}",
+  "name": "TypeShift",
+  "description": "Offline automatic Dubeolsik conversion for chat",
+  "authors": [],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "modmenu": ["com.teashoe.typeshift.client.TypeShiftModMenu"],
+    "client": [
+      "com.teashoe.typeshift.client.TypeshiftClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}",
+    "java": ">=25"
+  },
+  "suggests": { "modmenu": ">=21.0.0" },
+  "mixins": [
+    "typeshift.mixins.json"
+  ]
+}
