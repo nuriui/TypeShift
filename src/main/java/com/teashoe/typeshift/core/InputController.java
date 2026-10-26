@@ -25,8 +25,13 @@ public final class InputController {
     private boolean numericVersion;
     private boolean numericGeneralSuffix;
     private boolean ownedNumericGeneralSuffix;
+    private boolean extensionSession;
+    private boolean ownedExtension;
     private String pendingNumber = "";
     private record PendingWord(int start, String raw) {}
+    private record KeptWord(int start, String raw, String displayed) {}
+    private KeptWord keptDot;
+    private boolean dotEnding;
     private PendingWord pendingWord;
     private PendingWord dottedWord;
     private final NumericSuffixMatcher numericSuffixes = new NumericSuffixMatcher();
@@ -39,7 +44,7 @@ public final class InputController {
     public LanguageTracker.Language language() { return language.language(); }
     public void setPlayers(Collection<String> names) { protector.setPlayers(names); }
     public void external(Source source) {
-        pendingWord = null; dottedWord = null;
+        pendingWord = null; dottedWord = null; keptDot = null;
         if (source != Source.NAVIGATION && source != Source.MOUSE) owned = null;
         quoteLanguage = null;
         session = null; undo = null; precedingUndo = null; suppressed = true; expectedState = null; language.reset();
@@ -76,10 +81,24 @@ public final class InputController {
         if (session != null && !session.matches(before)) external(Source.NAVIGATION);
         boolean letter = codepoint >= 'a' && codepoint <= 'z' || codepoint >= 'A' && codepoint <= 'Z';
         if (codepoint != '.') dottedWord = null;
+        if (keptDot != null) {
+            KeptWord kept = keptDot; keptDot = null;
+            int dot = kept.start() + kept.displayed().length();
+            if ((letter || codepoint >= '0' && codepoint <= '9') && from == dot + 1 && dot < before.text().length()
+                && before.text().startsWith(kept.displayed(), kept.start()) && before.text().charAt(dot) == '.') {
+                Edit edit = replacements.replace(after, kept.start(), dot, kept.raw());
+                session = null; undo = null; precedingUndo = null; owned = null; suppressed = true; pendingWord = null;
+                return Optional.of(edit);
+            }
+        }
         if (!letter) {
             Optional<Edit> result = Optional.empty();
             if (session != null) {
-                if (":/\\.@_~0123456789".indexOf(codepoint) >= 0) {
+                if (codepoint == '.' && keepsAtDot(before)) {
+                    dotEnding = true;
+                    try { result = completeWord(after, before.cursor()); } finally { dotEnding = false; }
+                    if (session.converted()) keptDot = new KeptWord(session.start(), session.raw(), session.displayed());
+                } else if (":/\\.@_~0123456789".indexOf(codepoint) >= 0) {
                     if (codepoint == '.' && engine.compose(session.raw()).length() == 1
                         && engine.evaluate(session.raw(), true).convert()
                         && engine.userDictionary().rule(session.raw()) == null
@@ -132,12 +151,16 @@ public final class InputController {
             suppressed = !Character.isWhitespace(codepoint) && "!?;,\"".indexOf(codepoint) < 0;
             return result;
         }
+        boolean fileSuffix = false;
         if (suppressed) {
             if (pendingDigits || from == 0 || Character.isWhitespace(before.text().charAt(from - 1))) suppressed = false;
-            else return Optional.empty();
+            else if (session == null && from >= 2 && before.text().charAt(from - 1) == '.' && isFileChar(before.text().charAt(from - 2))) {
+                suppressed = false; fileSuffix = true;
+            } else return Optional.empty();
         }
         if (session == null) {
             session = new InputSession(from);
+            extensionSession = fileSuffix;
             numericSession = pendingDigits;
             numericVersion = pendingDigits && pendingNumber.contains(".");
             numericGeneralSuffix = pendingDigits && (!numericVersion || pendingNumber.chars().filter(c -> c == '.').count() >= 2);
@@ -150,7 +173,17 @@ public final class InputController {
         return result;
     }
     private Optional<Edit> decide(Snapshot state, int end, boolean boundary) {
-        String rawContext = state.text().substring(0, session.start()) + session.raw() + state.text().substring(end);
+        String tail = state.text().substring(end);
+        if (dotEnding && tail.startsWith(".")) tail = tail.substring(1);
+        String rawContext = state.text().substring(0, session.start()) + session.raw() + tail;
+        if (extensionSession) {
+            var file = engine.fileExtension(session.raw());
+            if (file.isEmpty() || !file.get().complete() || protector.protectedFileRange(rawContext, session.start(), session.start() + session.raw().length()))
+                return restoreRaw(state, end);
+            session.literalPrefixLength(file.get().prefixLength());
+            language.koreanEvidence();
+            return Optional.of(convert(state, end, file.get().candidate()));
+        }
         var numericMatch = numericSession ? numericSuffixes.match(session.raw(), numericVersion) : NumericSuffixMatcher.Match.NONE;
         String numericCandidate = numericSession ? engine.compose(session.raw()) : "";
         boolean numericEvidence = numericSession && numericGeneralSuffix && numericCandidate.length() >= 2
@@ -158,10 +191,20 @@ public final class InputController {
             && !engine.isEnglishWord(session.raw())
             && (language.prefersKorean() || engine.evaluate(session.raw(), boundary, false, false).convert());
         boolean numericContinuation = numericSession && session.converted();
+        var unitMatch = numericSession && numericMatch == NumericSuffixMatcher.Match.NONE && !numericVersion
+            ? engine.numericUnit(session.raw()) : Optional.<AttachedParticleMatcher.Match>empty();
         if (protector.protectedRange(rawContext, session.start(), session.start() + session.raw().length(),
-                numericSession && (numericMatch != NumericSuffixMatcher.Match.NONE || numericEvidence || numericContinuation), numericVersion))
+                numericSession && (numericMatch != NumericSuffixMatcher.Match.NONE || numericEvidence || numericContinuation
+                    || unitMatch.isPresent()), numericVersion))
             return restoreRaw(state, end);
         if (numericSession) {
+            if (unitMatch.isPresent()) {
+                var unit = unitMatch.get();
+                if (!unit.complete()) return restoreRaw(state, end);
+                session.literalPrefixLength(unit.prefixLength());
+                language.koreanEvidence();
+                return Optional.of(convert(state, end, unit.candidate()));
+            }
             if (numericMatch == NumericSuffixMatcher.Match.COMPLETE || numericEvidence) {
                 language.koreanEvidence();
                 return Optional.of(convert(state, end, engine.compose(session.raw())));
@@ -180,7 +223,11 @@ public final class InputController {
         if (engine.knownKorean(session.raw())) session.literalPrefixLength(0);
         var decision = engine.evaluate(session.raw(), boundary, koreanContext(state.text(), session.start()));
         var attached = engine.attachedParticle(session.raw());
-        if (!decision.convert() && attached.isPresent() && (session.displayed().startsWith(
+        if (!decision.convert() && (attached.isEmpty() || boundary && !attached.get().complete())) {
+            var mixed = engine.mixedSplit(session.raw(), boundary);
+            if (mixed.isPresent()) attached = mixed;
+        }
+        if ((!decision.convert() || commonEnglishStem(attached, decision.margin())) && attached.isPresent() && (session.displayed().startsWith(
                 session.raw().substring(0, attached.get().prefixLength()))
                 || attached.get().honorific()
                 || session.raw().substring(0, attached.get().prefixLength()).matches("[A-Z]{3,8}"))) {
@@ -206,10 +253,29 @@ public final class InputController {
         }
         if (language.prefersKorean()) {
             int literalEnd = Math.min(session.literalPrefixLength(), session.raw().length());
-            String candidate = session.raw().substring(0, literalEnd) + engine.compose(session.raw().substring(literalEnd));
+            String korean = engine.compose(session.raw().substring(literalEnd));
+            if (!engine.plausibleComposition(korean, boundary)) return restoreRaw(state, end);
+            String candidate = session.raw().substring(0, literalEnd) + korean;
             return Optional.of(convert(state, end, candidate));
         }
         return restoreRaw(state, end);
+    }
+    private static boolean isFileChar(char c) { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-'; }
+    /** A period right after a word that is firmly Korean ends the sentence instead of starting a file name or domain. */
+    private boolean keepsAtDot(Snapshot before) {
+        String raw = session.raw();
+        if (numericSession || engine.compose(raw).length() < 2) return false;
+        if (protector.protectedRange(before.text(), session.start(), before.cursor(), false, false)) return false;
+        return engine.knownKorean(raw)
+            || engine.evaluate(raw, true, koreanContext(before.text(), session.start())).convert()
+            || engine.attachedParticle(raw).filter(AttachedParticleMatcher.Match::complete).isPresent()
+            || engine.mixedSplit(raw, true).isPresent();
+    }
+    /** A common English word plus a complete particle beats a weak whole-token Korean reading (world+를, not 재깅를). */
+    private boolean commonEnglishStem(Optional<AttachedParticleMatcher.Match> attached, double margin) {
+        if (attached.isEmpty() || !attached.get().complete() || attached.get().prefixLength() < 4 || margin >= 3.0) return false;
+        int rank = engine.englishRank(session.raw().substring(0, attached.get().prefixLength()).toLowerCase(Locale.ROOT));
+        return rank > 0 && rank <= 5000;
     }
     private Optional<Edit> restoreRaw(Snapshot state, int end) {
         if (!session.converted()) return Optional.empty();
@@ -267,6 +333,7 @@ public final class InputController {
         owned = undo;
         ownedLiteralPrefix = session.literalPrefixLength();
         ownedNumeric = numericSession;
+        ownedExtension = extensionSession;
         ownedNumericVersion = numericVersion;
         ownedNumericGeneralSuffix = numericGeneralSuffix;
         replacements.record(undo);
@@ -304,7 +371,7 @@ public final class InputController {
             for (char c : raw.toCharArray()) session.append(c);
             session.literalPrefixLength(prefix);
             session.display(retained, true);
-            suppressed = false; pendingDigits = false; pendingNumber = ""; numericSession = ownedNumeric; numericVersion = ownedNumericVersion; numericGeneralSuffix = ownedNumericGeneralSuffix;
+            suppressed = false; pendingDigits = false; pendingNumber = ""; numericSession = ownedNumeric; extensionSession = ownedExtension; numericVersion = ownedNumericVersion; numericGeneralSuffix = ownedNumericGeneralSuffix;
             language.koreanEvidence(); expectedState = after;
             undo = new ConversionRecord(previous.start(), raw, retained, before, after);
             owned = undo;

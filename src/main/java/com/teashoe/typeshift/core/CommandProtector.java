@@ -21,6 +21,14 @@ public final class CommandProtector {
     public boolean protectedRange(String text, int start, int end, boolean numericSuffix, boolean versionSuffix) {
         return protectedRange(text, start, end, numericSuffix, versionSuffix, false);
     }
+    /** For a particle after a file name or domain: only URLs, drive paths, e-mail addresses and command arguments stay untouched. */
+    public boolean protectedFileRange(String text, int start, int end) {
+        if (start < messageStart(text)) return true;
+        int left = start, right = end;
+        while (left > 0 && !Character.isWhitespace(text.charAt(left - 1)) && text.charAt(left - 1) != '"') left--;
+        while (right < text.length() && !Character.isWhitespace(text.charAt(right)) && text.charAt(right) != '"') right++;
+        return text.substring(left, right).chars().anyMatch(c -> ":/\\@~".indexOf(c) >= 0);
+    }
     public boolean protectedCompletedRange(String text, int start, int end) {
         return protectedRange(text, start, end, false, false, true);
     }

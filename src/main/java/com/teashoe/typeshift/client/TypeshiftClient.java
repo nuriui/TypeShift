@@ -10,6 +10,7 @@ public final class TypeshiftClient implements ClientModInitializer {
     private static ConversionEngine engine;
     private static UserDictionary userDictionary;
     private static final ChatLanguageMemory chatLanguage = new ChatLanguageMemory();
+    private static final ChatLanguageMemory searchLanguage = new ChatLanguageMemory();
     @Override
     public void onInitializeClient() {
         try {
@@ -21,8 +22,9 @@ public final class TypeshiftClient implements ClientModInitializer {
             LoggerFactory.getLogger("TypeShift").error("TypeShift disabled: configuration or dictionary could not be loaded", ex);
         }
     }
-    public static InputController newController() {
-        return engine == null ? null : new InputController(engine, new CommandProtector(data.protectedWords()), chatLanguage);
+    public static InputController newController(boolean itemSearch) {
+        return engine == null ? null : new InputController(engine, new CommandProtector(data.protectedWords()),
+            itemSearch ? searchLanguage : chatLanguage);
     }
     public static UserDictionary userDictionary() { return userDictionary; }
 }

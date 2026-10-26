@@ -4,7 +4,7 @@
   "version": "${version}",
   "name": "TypeShift",
   "icon": "assets/typeshift/icon.png",
-  "description": "Offline automatic Dubeolsik conversion for chat",
+  "description": "Offline automatic Dubeolsik conversion for chat and Creative inventory search",
   "authors": [],
   "contact": {},
   "license": "MIT",

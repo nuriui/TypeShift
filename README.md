@@ -7,6 +7,7 @@ Inspired by [Catchtype](https://catchtype.com/), TypeShift is an independent imp
 ## Features
 
 - Converts as you type: `dkssud` → `안녕`.
+- Works in chat and the Creative inventory search box. Item searches use Minecraft's selected display language.
 - Uses word and character statistics to handle mixed English/Korean input.
 - Protects recognized game terms, player names, URLs, file paths, and commands from conversion.
 - Supports continued editing and undo with Ctrl+Z (Cmd+Z on macOS).

@@ -17,6 +17,162 @@ class ConversionTest {
         engine = new ConversionEngine(data, AutoLangConfig.defaults());
     }
     @BeforeEach void resetLearning() { engine = new ConversionEngine(data, AutoLangConfig.defaults()); }
+    @Test void englishStemFollowedByKoreanPredicateConverts() {
+        var keys = new DubeolsikConverter();
+        for (String sentence : List.of("더 잘 build하는지가 궁금해", "build해서 좋아", "더 잘 build하는데 되나", "build하는 방법")) {
+            StringBuilder typed = new StringBuilder();
+            for (char c : (sentence + " ").toCharArray())
+                typed.append(c >= 0xAC00 && c <= 0xD7A3 ? keys.toKeys("" + c) : "" + c);
+            Harness h = new Harness(); h.type(typed.toString());
+            assertEquals(sentence + " ", h.state.text(), sentence);
+        }
+        Harness undo = new Harness(); undo.type("build" + keys.toKeys("하는지가") + " ");
+        assertEquals("build하는지가 ", undo.state.text());
+        undo.undo(); assertEquals("build" + keys.toKeys("하는지가") + " ", undo.state.text());
+    }
+    private static String keysOf(String sentence) {
+        var keys = new DubeolsikConverter(); StringBuilder typed = new StringBuilder();
+        for (char c : sentence.toCharArray()) typed.append(c >= 0xAC00 && c <= 0xD7A3 ? keys.toKeys("" + c) : "" + c);
+        return typed.toString();
+    }
+    @Test void mixedEnglishKoreanSentencesFromUserReports() {
+        for (String sentence : List.of(
+            "Github에서 download한 config.json을 수정했는데 Minecraft가 실행되지 않아",
+            "Apple의 macos와 microsoft의 windows는 keyboard shortcut이 달라",
+            "my_config.json은 server1.properties를 읽어", "github.com에서 받아", "readme.md를 봐", "microsoft의")) {
+            Harness h = new Harness(); h.type(keysOf(sentence));
+            assertEquals(sentence, h.state.text(), sentence);
+        }
+    }
+    @Test void particleAfterFileNameKeepsUrlsPathsAndCommandsProtected() {
+        for (String raw : List.of("https://github.com/a/config.json" + "dmf", "C:/mods/config.json" + "dmf", "mail@test.com" + "dmf",
+            "/give Steve config.json" + "dmf", "config.json", "hello.dmf", "dkssud.txt"))
+            { Harness h = new Harness(); h.type(raw); assertEquals(raw, h.state.text(), raw); }
+        Harness undo = new Harness(); undo.type("config.jsondmf");
+        assertEquals("config.json을", undo.state.text());
+        undo.undo(); assertEquals("config.jsondmf", undo.state.text());
+        Harness back = new Harness(); back.type("config.jsondmf");
+        back.state = back.controller.backspace(back.state).orElseThrow().result();
+        assertEquals("config.json으", back.state.text());
+    }
+    @Test void periodAfterKoreanWordEndsSentenceButFileNamesStayProtected() {
+        var keys = new DubeolsikConverter();
+        for (String context : List.of("", "dkssud ")) {
+            for (String sentence : List.of("플레이했어", "안녕", "다르기", "download한")) {
+                String typed = sentence.equals("download한") ? "download" + keys.toKeys("한") : keys.toKeys(sentence);
+                Harness h = new Harness(); h.type(context); String before = h.state.text();
+                h.type(typed + "."); assertEquals(before + sentence + ".", h.state.text(), context + sentence);
+                h.type(".."); assertEquals(before + sentence + "...", h.state.text());
+                Harness next = new Harness(); next.type(context); next.type(typed + ". " + keys.toKeys("다음") + " ");
+                assertEquals(before + sentence + ". 다음 ", next.state.text(), context + sentence);
+            }
+            for (String name : List.of("플레이했어", "안녕")) {
+                Harness file = new Harness(); file.type(context); String before = file.state.text();
+                file.type(keys.toKeys(name) + ".txt"); assertEquals(before + keys.toKeys(name) + ".txt", file.state.text(), name);
+            }
+            for (String raw : List.of("readme.md", "github.com", "dkssud.com", "hello. ", "wkf.", "dk."))
+                { Harness h = new Harness(); h.type(context); String before = h.state.text(); h.type(raw); assertEquals(before + raw, h.state.text(), raw); }
+        }
+        Harness undo = new Harness(); undo.type("vmffpdlgoTdj.");
+        undo.undo(); assertEquals("vmffpdlgoTdj.", undo.state.text());
+    }
+    @Test void englishWordsComposingToHangulSurviveKoreanMode() {
+        var keys = new DubeolsikConverter();
+        assertTrue(engine.prefersEnglish("survival", true));
+        assertTrue(engine.prefersEnglish("world", true));
+        for (String context : List.of("", "dkssud ", "dkssud hello ", "dkssud dkssud dkssud "))
+            for (String word : List.of("survival", "world")) {
+                Harness h = new Harness(); h.type(context); String before = h.state.text();
+                h.type(word + " "); assertEquals(before + word + " ", h.state.text(), context + word);
+                Harness particle = new Harness(); particle.type(context); String start = particle.state.text();
+                particle.type(word + keys.toKeys("를") + " " + keys.toKeys("구해") + " ");
+                assertEquals(start + word + "를 구해 ", particle.state.text(), context + word + "를");
+            }
+    }
+    @Test void englishStemWithSingleSyllableKoreanTail() {
+        var keys = new DubeolsikConverter();
+        for (String context : List.of("", "dkssud ", "hello "))
+            for (String sentence : List.of("download한 파일", "download하는 파일")) {
+                StringBuilder typed = new StringBuilder();
+                for (char c : (sentence + " ").toCharArray())
+                    typed.append(c >= 0xAC00 && c <= 0xD7A3 ? keys.toKeys("" + c) : "" + c);
+                Harness h = new Harness(); h.type(context); String before = h.state.text();
+                h.type(typed.toString());
+                assertEquals(before + sentence + " ", h.state.text(), context + sentence);
+            }
+        Harness enter = new Harness(); enter.type("download" + keys.toKeys("한"));
+        enter.controller.finish(enter.state).ifPresent(e -> enter.state = e.result());
+        assertEquals("download한", enter.state.text());
+        enter.undo(); assertEquals("download" + keys.toKeys("한"), enter.state.text());
+    }
+    @Test void englishUnitAfterDigitsTakesParticle() {
+        var keys = new DubeolsikConverter();
+        for (String sentence : List.of("내가 45min으로 설정을 했어", "45km로 갔어", "45kg으로 설정", "30sec으로 설정", "2h로 설정", "5GB로 설정")) {
+            StringBuilder typed = new StringBuilder();
+            for (char c : (sentence + " ").toCharArray())
+                typed.append(c >= 0xAC00 && c <= 0xD7A3 ? keys.toKeys("" + c) : "" + c);
+            Harness h = new Harness(); h.type(typed.toString());
+            assertEquals(sentence + " ", h.state.text(), sentence);
+        }
+        Harness partial = new Harness(); partial.type("45mindm");
+        assertEquals("45mindm", partial.state.text());
+        partial.type("f"); assertEquals("45min을", partial.state.text());
+        partial.type("h"); assertEquals("45min으로", partial.state.text());
+        partial.undo(); assertEquals("45mindmfh", partial.state.text());
+        Harness back = new Harness(); back.type("45mindmfh");
+        back.state = back.controller.backspace(back.state).orElseThrow().result();
+        assertEquals("45min", back.state.text().substring(0, 5));
+        for (String raw : List.of("45min", "45min ", "45.5min ", "http://a.com/45mindmfh ", "a/45mindmfh ", "45mindmfh.txt "))
+            { Harness h = new Harness(); h.type(raw); assertEquals(raw, h.state.text(), raw); }
+    }
+    @Test void lowRankEnglishStemTakesCompleteParticle() {
+        var keys = new DubeolsikConverter();
+        assertTrue(data.english().get("tester") > 20000);
+        for (String context : List.of("", "hello ", "dkssud ")) {
+            Harness h = new Harness(); h.type(context);
+            String before = h.state.text();
+            h.type("tester" + keys.toKeys("를") + " " + keys.toKeys("구해") + " ");
+            assertEquals(before + "tester를 구해 ", h.state.text(), context);
+        }
+        Harness partial = new Harness(); partial.type("testerfm");
+        assertEquals("testerfm", partial.state.text());
+        partial.type("f"); assertEquals("tester를", partial.state.text());
+        partial.undo(); assertEquals("testerfmf", partial.state.text());
+    }
+    @Test void englishWordsEndingInKoreanLikeKeysStayEnglish() {
+        for (String word : List.of("building", "buildings", "tester", "goodbye", "program", "testing", "github", "pizza"))
+            { Harness h = new Harness(); h.type("hello " + word + " "); assertEquals("hello " + word + " ", h.state.text(), word); }
+    }
+    @Test void malformedKoreanFallsBackToEnglishWithoutProtectedEntry() {
+        assertFalse(data.protectedWords().contains("github"));
+        assertFalse(data.english().containsKey("github"));
+        for (String prefix : List.of("dkssud ", "codefmf ")) {
+            Harness h = new Harness(); h.type(prefix); String before = h.state.text();
+            h.type("github"); assertEquals(before + "github", h.state.text());
+            h.type("dp"); assertEquals(before + "github에", h.state.text());
+            h.type(" " + new DubeolsikConverter().toKeys("올렸어") + " ");
+            assertEquals(before + "github에 올렸어 ", h.state.text());
+        }
+    }
+    @Test void malformedWordRestoresAtBoundaryAndPreservesFollowingKorean() {
+        Harness h = new Harness(); h.type("dkssud github ");
+        assertEquals("안녕 github ", h.state.text());
+        h.type(new DubeolsikConverter().toKeys("딴겜 데코니나 ㅋㅋ ㅠㅠ") + " ");
+        assertEquals("안녕 github 딴겜 데코니나 ㅋㅋ ㅠㅠ ", h.state.text());
+        Harness pending = new Harness(); pending.type("dkssud dkss");
+        assertEquals("안녕 안ㄴ", pending.state.text());
+        pending.type("ud"); assertEquals("안녕 안녕", pending.state.text());
+        Harness undo = new Harness(); undo.type("codefmf githubdp");
+        undo.undo(); assertEquals("code를 githubdp", undo.state.text());
+    }
+    @Test void compositionShapeDistinguishesPendingConsonantsFromStrayVowels() {
+        assertTrue(engine.plausibleComposition("안ㄴ", false));
+        assertFalse(engine.plausibleComposition("안ㄴ", true));
+        assertTrue(engine.plausibleComposition("ㅋㅋ", true));
+        assertTrue(engine.plausibleComposition("딴겜", true));
+        assertFalse(engine.plausibleComposition("햐소ㅕㅠ", false));
+        assertFalse(engine.plausibleComposition("햐소ㅕㅠ", true));
+    }
     @Test void honorificStandaloneAndNicknameAcrossContexts() {
         Harness single = new Harness(); single.type("sla"); assertEquals("sla", single.state.text());
         single.type(" "); assertEquals("님 ", single.state.text());
@@ -616,7 +772,7 @@ class ConversionTest {
     }
     @Test void englishRestoresOriginalKeysAndSwitchesBack() {
         Harness h = new Harness(); h.type("dkssud ");
-        h.type("he"); assertEquals("안녕 ㅗㄷ", h.state.text());
+        h.type("he"); assertEquals("안녕 he", h.state.text());
         h.type("llo "); assertEquals("안녕 hello ", h.state.text());
         assertEquals(LanguageTracker.Language.ENGLISH, h.controller.language());
         h.type("world "); assertEquals("안녕 hello world ", h.state.text());
@@ -660,7 +816,7 @@ class ConversionTest {
     }
     @Test void englishWinsAtBoundaryWithoutEditingNativeIme() {
         Harness h = new Harness(); h.type("dkssud is");
-        assertEquals("안녕 ㅑㄴ", h.state.text());
+        assertEquals("안녕 is", h.state.text());
         h.controller.finish(h.state).ifPresent(edit -> h.state = edit.result());
         assertEquals("안녕 is", h.state.text());
         assertEquals(LanguageTracker.Language.ENGLISH, h.controller.language());

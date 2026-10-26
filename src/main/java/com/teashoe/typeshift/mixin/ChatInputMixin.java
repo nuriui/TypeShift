@@ -7,6 +7,7 @@ import com.teashoe.typeshift.core.ReplacementManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen;
 import net.minecraft.client.input.*;
 import org.spongepowered.asm.mixin.*;
 import org.spongepowered.asm.mixin.injection.*;
@@ -24,9 +25,13 @@ public abstract class ChatInputMixin {
 
     @Unique private EditBox typeshift$box() { return (EditBox) (Object) this; }
     @Unique private InputController typeshift$active() {
-        if (!(Minecraft.getInstance().gui.screen() instanceof ChatScreen screen)
-            || ((ChatScreenAccessor) screen).typeshift$input() != (Object) this) return null;
-        if (typeshift$controller == null) typeshift$controller = TypeshiftClient.newController();
+        var screen = Minecraft.getInstance().gui.screen();
+        boolean chat = screen instanceof ChatScreen && ((ChatScreenAccessor) screen).typeshift$input() == (Object) this;
+        boolean search = screen instanceof CreativeModeInventoryScreen
+            && ((CreativeSearchAccessor) screen).typeshift$searchBox() == (Object) this
+            && typeshift$box().isVisible() && typeshift$box().isFocused();
+        if (!chat && !search) return null;
+        if (typeshift$controller == null) typeshift$controller = TypeshiftClient.newController(search);
         return typeshift$controller;
     }
     @Unique private ReplacementManager.Snapshot typeshift$snapshot() {
@@ -51,7 +56,8 @@ public abstract class ChatInputMixin {
         var controller = typeshift$active();
         if (controller == null || controller.replacements().modifying()) return;
         var connection = Minecraft.getInstance().getConnection();
-        if (connection != null) controller.setPlayers(connection.getOnlinePlayers().stream().map(p -> p.getProfile().name()).toList());
+        if (connection != null && Minecraft.getInstance().gui.screen() instanceof ChatScreen)
+            controller.setPlayers(connection.getOnlinePlayers().stream().map(p -> p.getProfile().name()).toList());
         if (controller.wouldExceedRawLimit(typeshift$snapshot(), event.codepoint(), maxLength)) {
             ci.setReturnValue(true);
             return;
@@ -82,7 +88,10 @@ public abstract class ChatInputMixin {
         var controller = typeshift$active();
         if (controller == null || controller.composition().composing()) return;
         if (event.isConfirmation()) {
-            controller.finish(typeshift$snapshot()).ifPresent(this::typeshift$apply);
+            var edit = controller.finish(typeshift$snapshot());
+            edit.ifPresent(this::typeshift$apply);
+            if (edit.isPresent() && Minecraft.getInstance().gui.screen() instanceof CreativeModeInventoryScreen)
+                ci.setReturnValue(true);
         } else if (event.hasControlDownWithQuirk() && event.shortcutKey() == InputConstants.KEYCODE_Z && !event.hasShiftDown() && !event.hasAltDown()) {
             var edit = controller.undo(typeshift$snapshot());
             if (edit.isPresent() && edit.get().result().text().length() <= maxLength) {

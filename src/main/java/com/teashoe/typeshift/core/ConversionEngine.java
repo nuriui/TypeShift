@@ -63,10 +63,23 @@ public final class ConversionEngine {
         if (dictionary.koreanRank(korean) > 0 || words.evidence(korean) > 0) return false;
         boolean completeHangul = korean.chars().allMatch(c -> c >= 0xAC00 && c <= 0xD7A3);
         double margin = scorer.english(raw, boundary) + dictionary.englishBonus(raw) - scorer.korean(korean, raw.length(), boundary);
-        if (dictionary.englishRank(raw) > 0) return !completeHangul || margin >= 2.5;
+        int rank = dictionary.englishRank(raw);
+        if (rank > 0) return !completeHangul || margin >= (rank <= 5000 ? 0.5 : rank <= 20000 ? 1.5 : 2.5);
         return boundary && raw.length() >= 6 && scorer.english(raw, boundary) >= -3.5 && margin >= 3.0;
     }
+    public boolean plausibleComposition(String candidate, boolean boundary) {
+        if (candidate.isEmpty()) return false;
+        if (candidate.chars().allMatch(c -> c >= 0xAC00 && c <= 0xD7A3)) return true;
+        if (candidate.chars().allMatch(c -> c >= 0x3131 && c <= 0x314E)) return true;
+        if (candidate.length() >= 2 && candidate.charAt(0) >= 0x314F && candidate.charAt(0) <= 0x3163
+            && candidate.chars().allMatch(c -> c == candidate.charAt(0))) return true;
+        if (boundary) return false;
+        int last = candidate.length() - 1;
+        return candidate.charAt(last) >= 0x3131 && candidate.charAt(last) <= 0x314E
+            && candidate.substring(0, last).chars().allMatch(c -> c >= 0xAC00 && c <= 0xD7A3);
+    }
     public boolean isEnglishWord(String raw) { return dictionary.englishRank(raw) > 0; }
+    public int englishRank(String raw) { return dictionary.englishRank(raw); }
     public boolean reconsiderBefore(String previous, String next) {
         String head = compose(previous), tail = compose(next);
         return java.util.Set.of("내", "네", "제", "그", "이", "저").contains(head)
@@ -76,6 +89,32 @@ public final class ConversionEngine {
     }
     public boolean knownKorean(String raw) { return dictionary.koreanRank(converter.convert(raw)) > 0; }
     public java.util.Optional<AttachedParticleMatcher.Match> attachedParticle(String raw) { return particles.match(raw); }
+    public java.util.Optional<AttachedParticleMatcher.Match> numericUnit(String raw) { return particles.numericUnit(raw); }
+    public java.util.Optional<AttachedParticleMatcher.Match> fileExtension(String raw) { return particles.fileExtension(raw); }
+    /** English stem immediately followed by Korean keys that are not a particle, e.g. build + 하는지가. */
+    public java.util.Optional<AttachedParticleMatcher.Match> mixedSplit(String raw, boolean boundary) {
+        if (raw.length() < 5 || raw.length() > 64 || !raw.chars().allMatch(c -> c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'))
+            return java.util.Optional.empty();
+        if (dictionary.englishRank(raw.toLowerCase(java.util.Locale.ROOT)) > 0 || dictionary.protectedWord(raw)
+            || dictionary.koreanRank(converter.convert(raw)) > 0) return java.util.Optional.empty();
+        for (int split = raw.length() - 2; split >= 3; split--) {
+            String stem = raw.substring(0, split), tail = raw.substring(split);
+            String korean = converter.convert(tail);
+            if (korean.isEmpty() || korean.charAt(0) < 0xAC00 || korean.charAt(0) > 0xD7A3) continue;
+            boolean single = korean.length() == 1;
+            if (!particles.englishStem(stem, raw, single)) continue;
+            if (boundary) {
+                boolean hangul = korean.chars().allMatch(c -> c >= 0xAC00 && c <= 0xD7A3);
+                if (!hangul) continue;
+                if (single) {
+                    int rank = dictionary.koreanRank(korean);
+                    if (rank == 0 || rank > 1000) continue;
+                } else if (dictionary.koreanRank(korean) == 0 && words.evidence(korean) <= 0 && !evaluate(tail, true, true).convert()) continue;
+            } else if (!plausibleComposition(korean, false)) continue;
+            return java.util.Optional.of(new AttachedParticleMatcher.Match(stem + korean, split, boundary, false));
+        }
+        return java.util.Optional.empty();
+    }
     public String compose(String raw) { return converter.convert(raw); }
     public boolean enabled() { return config.enabled(); }
     public UserDictionary userDictionary() { return userDictionary; }
