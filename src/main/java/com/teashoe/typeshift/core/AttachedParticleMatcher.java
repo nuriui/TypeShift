@@ -8,10 +8,15 @@ public final class AttachedParticleMatcher {
     private final DubeolsikConverter converter = new DubeolsikConverter();
     private final Set<String> complete = new HashSet<>();
     private final Set<String> prefixes = new HashSet<>();
+    private final NgramScorer scorer;
     public AttachedParticleMatcher(DictionaryLoader.Data data) {
         this.data = data;
-        for (String particle : Set.of("은", "는", "이", "가", "을", "를", "에", "에서", "로", "으로", "와", "과",
-            "도", "만", "한테", "에게", "까지", "부터", "처럼", "보다", "랑", "이랑", "하고")) {
+        scorer = new NgramScorer(data);
+        Set<String> particles = new HashSet<>(Set.of("은", "는", "이", "가", "을", "를", "에", "에서", "로", "으로", "와", "과",
+            "도", "만", "한테", "에게", "까지", "부터", "처럼", "보다", "랑", "이랑", "하고"));
+        for (String base : List.of("에", "에서", "로", "으로", "한테", "에게", "까지", "부터", "처럼", "보다"))
+            for (String tail : List.of("는", "도", "만")) particles.add(base + tail);
+        for (String particle : particles) {
             String keys = converter.toKeys(particle);
             complete.add(keys);
             for (int i = 1; i <= keys.length(); i++) prefixes.add(keys.substring(0, i));
@@ -25,12 +30,22 @@ public final class AttachedParticleMatcher {
             String base = raw.substring(0, split).toLowerCase(Locale.ROOT);
             int rank = data.english().getOrDefault(base, 0);
             if (!data.protectedWords().contains(base) && !(rank > 0 && rank <= 20000)
-                && !compoundEnglish(base)) continue;
+                && !compoundEnglish(base) && !unlistedName(raw.substring(0, split), raw)) continue;
             String suffix = raw.substring(split);
             if (prefixes.contains(suffix))
                 return Optional.of(new Match(raw.substring(0, split) + converter.convert(suffix), split, complete.contains(suffix)));
         }
         return Optional.empty();
+    }
+    private boolean unlistedName(String base, String whole) {
+        if (base.length() < 3 || base.length() > 32 || !base.matches("[A-Za-z]+")) return false;
+        String korean = converter.convert(base);
+        if (korean.chars().allMatch(c -> c >= 0xAC00 && c <= 0xD7A3)) return false;
+        boolean acronym = base.matches("[A-Z]{3,8}");
+        boolean camel = base.matches("[A-Za-z]*[a-z][A-Z][a-z]+(?:[A-Z][a-z]+)*");
+        if (!acronym && !camel) return false;
+        return acronym || scorer.english(base, true) >= -4.5
+            && scorer.english(base, true) - scorer.english(whole, true) >= 0.35;
     }
     private boolean compoundEnglish(String base) {
         if (base.length() < 6 || base.length() > 32) return false;

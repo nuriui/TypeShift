@@ -3,6 +3,7 @@
   "id": "typeshift",
   "version": "${version}",
   "name": "TypeShift",
+  "icon": "assets/typeshift/icon.png",
   "description": "Offline automatic Dubeolsik conversion for chat",
   "authors": [],
   "contact": {},

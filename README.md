@@ -1,6 +1,6 @@
-# TypeShift 26.3.14
+# TypeShift
 
-A client-only Fabric mod for Minecraft 26.3 that automatically converts English key sequences into Korean text in chat, as if you had typed them on a Korean 2-set (Dubeolsik) keyboard layout. No server installation is needed.
+A client-only Fabric mod for Minecraft that automatically converts English key sequences into Korean text in chat, as if you had typed them on a Korean 2-set (Dubeolsik) keyboard layout. No server installation is needed.
 
 Inspired by [Catchtype](https://catchtype.com/), TypeShift is an independent implementation and is not affiliated with it.
 
@@ -13,10 +13,6 @@ Inspired by [Catchtype](https://catchtype.com/), TypeShift is an independent imp
 - Provides keep/convert word lists through Mod Menu. After you undo a word's conversion three times, it is added to the keep list automatically.
 - Runs fully offline, with adjustable sensitivity.
 
-## Limitations
-
-- Detection can make mistakes.
-- Converting Korean keyboard input back to English is not supported.
 
 ## Requirements
 

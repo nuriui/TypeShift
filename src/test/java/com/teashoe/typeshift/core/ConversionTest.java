@@ -17,6 +17,44 @@ class ConversionTest {
         engine = new ConversionEngine(data, AutoLangConfig.defaults());
     }
     @BeforeEach void resetLearning() { engine = new ConversionEngine(data, AutoLangConfig.defaults()); }
+    @Test void mixedNamesAndParticleChains() {
+        var converter = new DubeolsikConverter();
+        for (String prefix : List.of("", "dkssud ", "hello "))
+            for (String name : List.of("catchtype", "TypeShift", "PixelForge", "ChatBridge", "CPU", "GPU"))
+                for (String suffix : List.of("를", "에서", "에서도", "으로는", "에게만")) {
+                    Harness h = new Harness(); h.type(prefix);
+                    String before = h.state.text();
+                    h.type(name + converter.toKeys(suffix));
+                    assertEquals(before + name + suffix, h.state.text(), "before space: " + prefix + name + suffix);
+                    h.type(" ");
+                    assertEquals(before + name + suffix + " ", h.state.text(), prefix + name + suffix);
+                }
+    }
+    @Test void mixedNameProtectionAndUndo() {
+        for (String name : List.of("PixelForge", "ChatBridge", "CPU")) {
+            Harness h = new Harness(); h.type(name + "fmf");
+            assertEquals(name + "를", h.state.text());
+            h.undo(); assertEquals(name + "fmf", h.state.text());
+            for (String raw : List.of(name + "fmf.txt", "https://" + name + "fmf.com", "/give Steve " + name + "fmf")) {
+                Harness protectedInput = new Harness(); protectedInput.type(raw + " ");
+                assertEquals(raw + " ", protectedInput.state.text());
+            }
+        }
+        var matcher = new AttachedParticleMatcher(data);
+        for (String english : data.english().keySet()) assertTrue(matcher.match(english).isEmpty(), english);
+    }
+    @Test void mixedNamesPreserveWholeEnglishAndRecoverDeletedParticle() {
+        for (String name : List.of("PixelForge", "ChatBridge", "CPU", "GPU", "catchtype", "TypeShift")) {
+            Harness h = new Harness(); h.type(name + "fmf");
+            h.state = h.controller.backspace(h.state).orElseThrow().result();
+            assertEquals(name + "르", h.state.text());
+            h.type("f"); assertEquals(name + "를", h.state.text());
+        }
+        for (String english : List.of("therefore", "software", "hardware", "catchphrase", "framework", "interface", "OpenSource", "PixelForge", "ChatBridge")) {
+            Harness h = new Harness(); h.type(english + " ");
+            assertEquals(english + " ", h.state.text());
+        }
+    }
     static class Harness {
         final InputController controller = new InputController(engine, new CommandProtector(data.protectedWords()));
         Snapshot state = new Snapshot("", 0, 0);

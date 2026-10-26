@@ -153,8 +153,9 @@ public final class InputController {
         if (engine.knownKorean(session.raw())) session.literalPrefixLength(0);
         var decision = engine.evaluate(session.raw(), boundary, koreanContext(state.text(), session.start()));
         var attached = engine.attachedParticle(session.raw());
-        if (!decision.convert() && attached.isPresent() && session.displayed().startsWith(
-                session.raw().substring(0, attached.get().prefixLength()))) {
+        if (!decision.convert() && attached.isPresent() && (session.displayed().startsWith(
+                session.raw().substring(0, attached.get().prefixLength()))
+                || session.raw().substring(0, attached.get().prefixLength()).matches("[A-Z]{3,8}"))) {
             var match = attached.get();
             if (match.complete() || !boundary && language.prefersKorean()) {
                 session.literalPrefixLength(match.prefixLength());
