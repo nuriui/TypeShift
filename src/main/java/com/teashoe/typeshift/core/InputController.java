@@ -9,7 +9,7 @@ public final class InputController {
     private final CommandProtector protector;
     private final ReplacementManager replacements = new ReplacementManager();
     private final CompositionTracker composition = new CompositionTracker();
-    private final LanguageTracker language = new LanguageTracker();
+    private final LanguageTracker language;
     private InputSession session;
     private ConversionRecord undo;
     private ConversionRecord owned;
@@ -26,13 +26,20 @@ public final class InputController {
     private boolean numericGeneralSuffix;
     private boolean ownedNumericGeneralSuffix;
     private String pendingNumber = "";
+    private record PendingWord(int start, String raw) {}
+    private PendingWord pendingWord;
+    private PendingWord dottedWord;
     private final NumericSuffixMatcher numericSuffixes = new NumericSuffixMatcher();
-    public InputController(ConversionEngine engine, CommandProtector protector) { this.engine = engine; this.protector = protector; }
+    public InputController(ConversionEngine engine, CommandProtector protector) { this(engine, protector, new ChatLanguageMemory()); }
+    public InputController(ConversionEngine engine, CommandProtector protector, ChatLanguageMemory memory) {
+        this.engine = engine; this.protector = protector; this.language = new LanguageTracker(memory);
+    }
     public ReplacementManager replacements() { return replacements; }
     public CompositionTracker composition() { return composition; }
     public LanguageTracker.Language language() { return language.language(); }
     public void setPlayers(Collection<String> names) { protector.setPlayers(names); }
     public void external(Source source) {
+        pendingWord = null; dottedWord = null;
         if (source != Source.NAVIGATION && source != Source.MOUSE) owned = null;
         quoteLanguage = null;
         session = null; undo = null; precedingUndo = null; suppressed = true; expectedState = null; language.reset();
@@ -68,15 +75,35 @@ public final class InputController {
         }
         if (session != null && !session.matches(before)) external(Source.NAVIGATION);
         boolean letter = codepoint >= 'a' && codepoint <= 'z' || codepoint >= 'A' && codepoint <= 'Z';
+        if (codepoint != '.') dottedWord = null;
         if (!letter) {
             Optional<Edit> result = Optional.empty();
             if (session != null) {
                 if (":/\\.@_~0123456789".indexOf(codepoint) >= 0) {
+                    if (codepoint == '.' && engine.compose(session.raw()).length() == 1
+                        && engine.evaluate(session.raw(), true).convert()
+                        && engine.userDictionary().rule(session.raw()) == null
+                        && !protector.protectedRange(before.text(), session.start(), before.cursor(), false, false))
+                        dottedWord = new PendingWord(session.start(), session.raw());
                     result = restoreRaw(after, before.cursor());
                 } else if (Character.isWhitespace(codepoint) || "!?;,\"".indexOf(codepoint) >= 0) {
-                    result = decide(after, before.cursor(), true);
+                    result = completeWord(after, before.cursor());
                 }
             }
+            if (codepoint == '.' && session == null && dottedWord != null
+                && after.cursor() == dottedWord.start() + dottedWord.raw().length() + 3
+                && after.text().substring(dottedWord.start(), after.cursor()).equals(dottedWord.raw() + "...")) {
+                String candidate = engine.compose(dottedWord.raw());
+                Edit edit = replacements.replace(after, dottedWord.start(), after.cursor() - 3, candidate);
+                undo = new ConversionRecord(dottedWord.start(), dottedWord.raw(), candidate, after, edit.result());
+                replacements.record(undo); owned = null; language.koreanEvidence(); result = Optional.of(edit);
+                dottedWord = null;
+            }
+            if (codepoint == ' ' && session != null && quoteLanguage == null && !numericSession
+                && !session.converted() && engine.userDictionary().rule(session.raw()) == null
+                && !protector.protectedCompletedRange(before.text(), session.start(), before.cursor()))
+                pendingWord = new PendingWord(session.start(), session.raw());
+            else pendingWord = null;
             boolean freshNumber = from == 0 || Character.isWhitespace(before.text().charAt(from - 1))
                 || before.text().charAt(from - 1) == '"';
             if (codepoint >= '0' && codepoint <= '9' && (freshNumber || session == null && !pendingNumber.isEmpty())) {
@@ -155,6 +182,7 @@ public final class InputController {
         var attached = engine.attachedParticle(session.raw());
         if (!decision.convert() && attached.isPresent() && (session.displayed().startsWith(
                 session.raw().substring(0, attached.get().prefixLength()))
+                || attached.get().honorific()
                 || session.raw().substring(0, attached.get().prefixLength()).matches("[A-Z]{3,8}"))) {
             var match = attached.get();
             if (match.complete() || !boundary && language.prefersKorean()) {
@@ -194,11 +222,32 @@ public final class InputController {
         }
         return Optional.of(edit);
     }
+    private Optional<Edit> completeWord(Snapshot state, int end) {
+        Optional<Edit> current = decide(state, end, true);
+        Snapshot after = current.map(Edit::result).orElse(state);
+        if (pendingWord != null && quoteLanguage == null && !numericSession && session.converted()
+            && session.literalPrefixLength() == 0
+            && session.start() == pendingWord.start() + pendingWord.raw().length() + 1
+            && after.text().startsWith(pendingWord.raw() + " ", pendingWord.start())
+            && engine.userDictionary().rule(pendingWord.raw()) == null
+            && !protector.protectedCompletedRange(after.text(), pendingWord.start(), session.start() - 1)
+            && engine.reconsiderBefore(pendingWord.raw(), session.raw())) {
+            String raw = pendingWord.raw() + " " + session.raw();
+            String candidate = engine.compose(pendingWord.raw()) + " " + session.displayed();
+            Edit edit = replacements.replace(state, pendingWord.start(), end, candidate);
+            undo = new ConversionRecord(pendingWord.start(), raw, candidate, state, edit.result());
+            replacements.record(undo); owned = null;
+            pendingWord = null;
+            return Optional.of(edit);
+        }
+        pendingWord = null;
+        return current;
+    }
     public Optional<Edit> finish(Snapshot state) {
         if (!engine.enabled() || composition.composing() || replacements.modifying() || suppressed
             || session == null || !session.matches(state)) return Optional.empty();
         if (expectedState != null && !expectedState.equals(state)) { external(Source.NAVIGATION); return Optional.empty(); }
-        Optional<Edit> edit = decide(state, state.cursor(), true);
+        Optional<Edit> edit = completeWord(state, state.cursor());
         expectedState = edit.map(Edit::result).orElse(state);
         session = null;
         return edit;
@@ -232,6 +281,7 @@ public final class InputController {
         return codepoint >= 32 && codepoint < 127 && state.text().length() + reserve + 1 > limit;
     }
     public void deleted(Snapshot before, Snapshot after) {
+        pendingWord = null; dottedWord = null;
         if (replacements.modifying()) return;
         ConversionRecord previous = owned;
         if (composition.composing() || previous == null || !previous.after().text().equals(before.text())) {
@@ -263,6 +313,7 @@ public final class InputController {
         external(Source.EXTERNAL); expectedState = after;
     }
     public Optional<Edit> backspace(Snapshot state) {
+        pendingWord = null; dottedWord = null;
         if (composition.composing() || session == null || !session.converted() || !session.matches(state)) return Optional.empty();
         session.backspace();
         int literalEnd = Math.min(session.literalPrefixLength(), session.raw().length());
@@ -278,6 +329,7 @@ public final class InputController {
         return Optional.of(edit);
     }
     public Optional<Edit> undo(Snapshot state) {
+        pendingWord = null; dottedWord = null;
         if (composition.composing() || undo == null || !undo.after().text().equals(state.text())) return Optional.empty();
         try { engine.userDictionary().reversed(undo.raw()); }
         catch (java.io.IOException ex) { System.getLogger("TypeShift").log(System.Logger.Level.WARNING, "Could not save learned word", ex); }

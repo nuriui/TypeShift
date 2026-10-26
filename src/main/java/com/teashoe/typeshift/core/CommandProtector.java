@@ -19,6 +19,12 @@ public final class CommandProtector {
         return protectedRange(text, start, end, numericSuffix, false);
     }
     public boolean protectedRange(String text, int start, int end, boolean numericSuffix, boolean versionSuffix) {
+        return protectedRange(text, start, end, numericSuffix, versionSuffix, false);
+    }
+    public boolean protectedCompletedRange(String text, int start, int end) {
+        return protectedRange(text, start, end, false, false, true);
+    }
+    private boolean protectedRange(String text, int start, int end, boolean numericSuffix, boolean versionSuffix, boolean complete) {
         if (start < messageStart(text)) return true;
         int left = start, right = end;
         while (left > 0 && !Character.isWhitespace(text.charAt(left - 1)) && text.charAt(left - 1) != '"') left--;
@@ -27,7 +33,7 @@ public final class CommandProtector {
         boolean version = versionSuffix && numericSuffix && token.matches("[0-9]+(?:\\.[0-9]+)+[a-z]+[!?;,]?");
         if (token.chars().anyMatch(c -> (!numericSuffix && Character.isDigit(c))
             || ":/\\@_~".indexOf(c) >= 0 || c == '.' && !version)) return true;
-        for (String word : local) if (!token.isEmpty() && word.startsWith(token)) return true;
+        for (String word : local) if (!token.isEmpty() && (complete ? word.equals(token) : word.startsWith(token))) return true;
         for (String name : players) if (!token.isEmpty() && name.startsWith(token)) return true;
         return false;
     }

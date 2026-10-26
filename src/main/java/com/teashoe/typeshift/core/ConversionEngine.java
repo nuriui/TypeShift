@@ -67,6 +67,13 @@ public final class ConversionEngine {
         return boundary && raw.length() >= 6 && scorer.english(raw, boundary) >= -3.5 && margin >= 3.0;
     }
     public boolean isEnglishWord(String raw) { return dictionary.englishRank(raw) > 0; }
+    public boolean reconsiderBefore(String previous, String next) {
+        String head = compose(previous), tail = compose(next);
+        return java.util.Set.of("내", "네", "제", "그", "이", "저").contains(head)
+            && dictionary.koreanRank(head) > 0 && dictionary.koreanRank(head) <= 200
+            && tail.length() >= 2 && dictionary.koreanRank(tail) > 0
+            && dictionary.englishRank(next) == 0 && evaluate(next, true).convert();
+    }
     public boolean knownKorean(String raw) { return dictionary.koreanRank(converter.convert(raw)) > 0; }
     public java.util.Optional<AttachedParticleMatcher.Match> attachedParticle(String raw) { return particles.match(raw); }
     public String compose(String raw) { return converter.convert(raw); }

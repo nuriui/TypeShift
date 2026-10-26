@@ -17,6 +17,136 @@ class ConversionTest {
         engine = new ConversionEngine(data, AutoLangConfig.defaults());
     }
     @BeforeEach void resetLearning() { engine = new ConversionEngine(data, AutoLangConfig.defaults()); }
+    @Test void honorificStandaloneAndNicknameAcrossContexts() {
+        Harness single = new Harness(); single.type("sla"); assertEquals("sla", single.state.text());
+        single.type(" "); assertEquals("님 ", single.state.text());
+        Harness enter = new Harness(); enter.type("sla");
+        enter.controller.finish(enter.state).ifPresent(e -> enter.state = e.result());
+        assertEquals("님", enter.state.text()); enter.undo(); assertEquals("sla", enter.state.text());
+        var converter = new DubeolsikConverter();
+        for (String context : List.of("", "dkssud ", "hello "))
+            for (String name : List.of("tuyu", "Tuyu", "Steve", "Minecraft", "PixelForge"))
+                for (String suffix : List.of("님", "님은", "님께서", "님도", "님한테")) {
+                    Harness h = new Harness(); h.type(context); String before = h.state.text();
+                    h.type(name + converter.toKeys(suffix));
+                    assertEquals(before + name + suffix, h.state.text(), context + name + suffix);
+                    h.type(" "); assertEquals(before + name + suffix + " ", h.state.text());
+                }
+    }
+    @Test void honorificProtectionAndEditing() throws Exception {
+        for (String raw : List.of("slang", "slate", "slam", "tesla", "tuyusla.txt", "https://tuyusla.com", "/msg tuyusla hello", "/give Steve tuyusla")) {
+            Harness h = new Harness(); h.type(raw + " "); assertEquals(raw + " ", h.state.text());
+        }
+        Harness h = new Harness(); h.type("tuyusla");
+        h.state = h.controller.backspace(h.state).orElseThrow().result();
+        assertEquals("tuyu니", h.state.text()); h.type("a"); assertEquals("tuyu님", h.state.text());
+        h.undo(); assertEquals("tuyusla", h.state.text());
+        Harness player = new Harness(); player.controller.setPlayers(List.of("tuyusla"));
+        player.type("tuyusla "); assertEquals("tuyusla ", player.state.text());
+        Harness addressed = new Harness(); addressed.controller.setPlayers(List.of("tuyu"));
+        addressed.type("tuyusla "); assertEquals("tuyu님 ", addressed.state.text());
+        Harness message = new Harness(); message.type("/msg Steve tuyusla "); assertEquals("/msg Steve tuyu님 ", message.state.text());
+        engine.userDictionary().put("tuyusla", UserDictionary.Rule.KEEP);
+        Harness keep = new Harness(); keep.type("tuyusla "); assertEquals("tuyusla ", keep.state.text());
+    }
+    @Test void shortEnglishPrefixResolvesAtWordBoundary() throws Exception {
+        Harness h = new Harness(); h.type("di"); assertEquals("di", h.state.text());
+        h.type(" "); assertEquals("야 ", h.state.text());
+        h.type("anjgo"); assertEquals("야 뭐해", h.state.text());
+        Harness enter = new Harness(); enter.type("di");
+        enter.controller.finish(enter.state).ifPresent(e -> enter.state = e.result());
+        assertEquals("야", enter.state.text());
+        enter.undo(); assertEquals("di", enter.state.text());
+        for (String raw : List.of("dictionary", "diamond", "digital", "did", "di.txt", "https://di.com", "/give Steve di")) {
+            Harness literal = new Harness(); literal.type(raw + " "); assertEquals(raw + " ", literal.state.text());
+        }
+        Harness player = new Harness(); player.controller.setPlayers(List.of("di"));
+        player.type("di "); assertEquals("di ", player.state.text());
+        engine.userDictionary().put("di", UserDictionary.Rule.KEEP);
+        Harness keep = new Harness(); keep.type("di "); assertEquals("di ", keep.state.text());
+    }
+    @Test void reconsiderationPreservesSurroundingTextAndUndo() {
+        Harness h = new Harness(); h.external("앞  뒤", 2, InputController.Source.MOUSE);
+        h.type("so tlrP "); assertEquals("앞 내 시계  뒤", h.state.text());
+        assertEquals(7, h.state.cursor()); assertEquals(7, h.state.anchor());
+        h.undo(); assertEquals("앞 so tlrP  뒤", h.state.text());
+        assertEquals(10, h.state.cursor());
+        Harness message = new Harness(); message.type("/msg Steve so tlrP ");
+        assertEquals("/msg Steve 내 시계 ", message.state.text());
+    }
+    @Test void shortWordsRespectKeepPlayerAndExternalBoundaries() throws Exception {
+        engine.userDictionary().put("dma", UserDictionary.Rule.KEEP);
+        Harness keep = new Harness(); keep.type("dma..."); assertEquals("dma...", keep.state.text());
+        engine.userDictionary().remove("dma");
+        Harness player = new Harness(); player.controller.setPlayers(List.of("dma"));
+        player.type("dma..."); assertEquals("dma...", player.state.text());
+        Harness moved = new Harness(); moved.type("dma."); moved.controller.external(InputController.Source.MOUSE);
+        moved.type(".."); assertEquals("dma...", moved.state.text());
+        assertFalse(new ConversionEngine(data, new AutoLangConfig(false, 1, false)).evaluate("sj", false).convert());
+        assertFalse(new ConversionEngine(data, new AutoLangConfig(true, 0, false)).evaluate("dma", false).convert());
+    }
+    @Test void standaloneShortWordsAndEllipsis() {
+        Harness h = new Harness(); h.type("s"); assertEquals("s", h.state.text());
+        h.type("j"); assertEquals("너", h.state.text());
+        h.type(" wlrma anjgo"); assertEquals("너 지금 뭐해", h.state.text());
+        Harness sound = new Harness(); sound.type("dma"); assertEquals("음", sound.state.text());
+        sound.type("."); assertEquals("dma.", sound.state.text());
+        sound.type("."); assertEquals("dma..", sound.state.text());
+        sound.type("."); assertEquals("음...", sound.state.text());
+        sound.undo(); assertEquals("dma...", sound.state.text());
+        for (String raw : List.of("dma.txt", "sj.com", "https://dma.com", "go ", "so ", "/give Steve dma...")) {
+            Harness protectedInput = new Harness(); protectedInput.type(raw); assertEquals(raw, protectedInput.state.text());
+        }
+    }
+    @Test void previousAmbiguousWordReevaluatesOnlyAtNextBoundary() {
+        Harness h = new Harness(); h.type("so "); assertEquals("so ", h.state.text());
+        h.type("tlrP"); assertEquals("so 시계", h.state.text());
+        h.type(" "); assertEquals("내 시계 ", h.state.text());
+        assertEquals(5, h.state.cursor());
+        h.undo(); assertEquals("so tlrP ", h.state.text());
+        Harness enter = new Harness(); enter.type("so tlrP");
+        enter.controller.finish(enter.state).ifPresent(e -> enter.state = e.result());
+        assertEquals("내 시계", enter.state.text());
+    }
+    @Test void previousAmbiguousWordRespectsExplicitInputAndProtection() throws Exception {
+        for (String raw : List.of("so what ", "go home ", "so  tlrP ", "\"so\" tlrP ", "/give Steve so tlrP ")) {
+            Harness h = new Harness(); h.type(raw);
+            assertFalse(h.state.text().contains("내"), raw);
+        }
+        Harness pasted = new Harness(); pasted.external("so ", 3, InputController.Source.PASTE);
+        pasted.type("tlrP "); assertEquals("so 시계 ", pasted.state.text());
+        Harness moved = new Harness(); moved.type("so "); moved.controller.external(InputController.Source.MOUSE);
+        moved.type("tlrP "); assertEquals("so 시계 ", moved.state.text());
+        engine.userDictionary().put("so", UserDictionary.Rule.KEEP);
+        Harness keep = new Harness(); keep.type("so tlrP "); assertEquals("so 시계 ", keep.state.text());
+        engine.userDictionary().remove("so");
+        Harness player = new Harness(); player.controller.setPlayers(List.of("so"));
+        player.type("so tlrP "); assertEquals("so 시계 ", player.state.text());
+    }
+    @Test void knownFirstWordEstablishesKoreanAtBoundary() {
+        Harness h = new Harness();
+        for (String key : List.of("s", "k", "a", "n")) h.type(key);
+        assertEquals("skan", h.state.text());
+        h.type(" "); assertEquals("나무 ", h.state.text());
+        h.type("auc ro vlfdygo"); assertEquals("나무 몇 개 필요해", h.state.text());
+        Harness enter = new Harness(); enter.type("skan");
+        enter.controller.finish(enter.state).ifPresent(e -> enter.state = e.result());
+        assertEquals("나무", enter.state.text());
+        enter.undo(); assertEquals("skan", enter.state.text());
+        Harness context = new Harness(); context.type("wlrma skan aucro vlfdygo");
+        assertEquals("지금 나무 몇개 필요해", context.state.text());
+    }
+    @Test void knownFirstWordKeepsProtectionAndSensitivity() {
+        assertTrue(data.korean().containsKey("나무"));
+        assertFalse(data.localKoreanWords().contains("나무"));
+        for (String raw : List.of("skan.txt", "https://skan.com", "/give Steve skan", "skan123", "skank", "skanks")) {
+            Harness h = new Harness(); h.type(raw + " "); assertEquals(raw + " ", h.state.text());
+        }
+        Harness player = new Harness(); player.controller.setPlayers(List.of("skan"));
+        player.type("skan "); assertEquals("skan ", player.state.text());
+        assertFalse(new ConversionEngine(data, new AutoLangConfig(true, 0, false)).evaluate("skan", true).convert());
+        assertFalse(new ConversionEngine(data, new AutoLangConfig(false, 0.5, false)).evaluate("skan", true).convert());
+    }
     @Test void mixedNamesAndParticleChains() {
         var converter = new DubeolsikConverter();
         for (String prefix : List.of("", "dkssud ", "hello "))
@@ -56,7 +186,9 @@ class ConversionTest {
         }
     }
     static class Harness {
-        final InputController controller = new InputController(engine, new CommandProtector(data.protectedWords()));
+        final InputController controller;
+        Harness() { this(new ChatLanguageMemory()); }
+        Harness(ChatLanguageMemory memory) { controller = new InputController(engine, new CommandProtector(data.protectedWords()), memory); }
         Snapshot state = new Snapshot("", 0, 0);
         List<Integer> changes = new ArrayList<>();
         void type(String text) {
@@ -75,6 +207,31 @@ class ConversionTest {
             controller.external(source); state = new Snapshot(text, cursor, cursor);
         }
         void undo() { controller.undo(state).ifPresent(e -> state = e.result()); }
+    }
+    @Test void newChatInheritsLastConfirmedLanguage() {
+        var memory = new ChatLanguageMemory();
+        Harness first = new Harness(memory);
+        assertEquals(LanguageTracker.Language.UNDECIDED, first.controller.language());
+        first.type("dkssud"); assertEquals("안녕", first.state.text());
+        Harness next = new Harness(memory); next.type("skan"); assertEquals("나무", next.state.text());
+        next.type(" hello "); assertEquals("나무 hello ", next.state.text());
+        assertEquals(LanguageTracker.Language.ENGLISH, memory.last());
+        Harness english = new Harness(memory); english.type("skan"); assertEquals("skan", english.state.text());
+        assertEquals(LanguageTracker.Language.UNDECIDED, new ChatLanguageMemory().last());
+    }
+    @Test void localResetsDoNotEraseCrossChatPreference() {
+        var memory = new ChatLanguageMemory();
+        Harness first = new Harness(memory); first.type("dkssud");
+        for (InputController.Source source : InputController.Source.values()) {
+            Harness reset = new Harness(memory); reset.controller.external(source);
+            assertEquals(LanguageTracker.Language.UNDECIDED, reset.controller.language());
+            assertEquals(LanguageTracker.Language.KOREAN, memory.last());
+        }
+        Harness command = new Harness(memory); command.type("/give Steve stone");
+        assertEquals(LanguageTracker.Language.KOREAN, memory.last());
+        Harness undo = new Harness(memory); undo.type("dkssud"); undo.undo();
+        assertEquals(LanguageTracker.Language.ENGLISH, memory.last());
+        Harness next = new Harness(memory); assertEquals(LanguageTracker.Language.ENGLISH, next.controller.language());
     }
     @Test void compoundEnglishNamesWithParticlesAcrossContexts() {
         assertFalse(data.protectedWords().contains("catchtype"));
@@ -104,8 +261,8 @@ class ConversionTest {
         player.type("catchtypefmf "); assertEquals("catchtypefmf ", player.state.text());
     }
     @Test void knownShortFirstWordUsesKeyNormalizedPrefixScore() {
-        Harness h = new Harness(); h.type("dka"); assertEquals("dka", h.state.text());
-        assertTrue(h.changes.isEmpty());
+        Harness h = new Harness(); h.type("dka"); assertEquals("암", h.state.text());
+        assertEquals(2, h.changes.getFirst());
         h.type("k"); assertEquals("아마", h.state.text());
         assertEquals(2, h.state.cursor()); assertEquals(2, h.state.anchor());
         h.type(" "); assertEquals("아마 ", h.state.text());
@@ -165,8 +322,8 @@ class ConversionTest {
         assertFalse(data.localKoreanWords().contains("단타"));
         assertFalse(data.koreanPairs().containsKey("단타"));
         Harness h = new Harness(); h.type("eksxk");
-        assertEquals("eksxk", h.state.text());
-        assertTrue(h.changes.isEmpty());
+        assertEquals("단타", h.state.text());
+        assertFalse(h.changes.isEmpty());
         h.type(" "); assertEquals("단타 ", h.state.text());
         assertEquals(3, h.state.cursor()); assertEquals(3, h.state.anchor());
         h.undo(); assertEquals("eksxk ", h.state.text());
@@ -258,7 +415,7 @@ class ConversionTest {
         }
     }
     @ParameterizedTest
-    @CsvSource({"dkssud,안녕,6", "dkssudgktpdy,안녕하세요,6", "rPthrgo,계속해,5"})
+    @CsvSource({"dkssud,안녕,2", "dkssudgktpdy,안녕하세요,2", "rPthrgo,계속해,5"})
     void exactFirstConversionKeystroke(String raw, String expected, int first) {
         Harness h = new Harness(); h.type(raw);
         assertEquals(expected, h.state.text());
@@ -270,7 +427,7 @@ class ConversionTest {
     @Test void exactContinuousTrace() {
         Harness h = new Harness(); List<String> trace = new ArrayList<>();
         for (char c : "dkssudgktpdy".toCharArray()) { h.type("" + c); trace.add(h.state.text()); }
-        assertEquals(List.of("d", "dk", "dks", "dkss", "dkssu", "안녕", "안녕ㅎ", "안녕하", "안녕핫", "안녕하세", "안녕하셍", "안녕하세요"), trace);
+        assertEquals(List.of("d", "아", "안", "안ㄴ", "안녀", "안녕", "안녕ㅎ", "안녕하", "안녕핫", "안녕하세", "안녕하셍", "안녕하세요"), trace);
     }
     @ParameterizedTest
     @CsvSource({"Minecraft", "Fabric", "Sodium", "NeoForge", "https://dkssud.com", "C:\\dkssud\\hello.txt", "dkssud.txt", "dkssud123", "hello", "/give Steve dkssud"})

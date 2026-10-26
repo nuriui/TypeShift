@@ -3,11 +3,12 @@ package com.teashoe.typeshift.core;
 import java.util.*;
 
 public final class AttachedParticleMatcher {
-    public record Match(String candidate, int prefixLength, boolean complete) {}
+    public record Match(String candidate, int prefixLength, boolean complete, boolean honorific) {}
     private final DictionaryLoader.Data data;
     private final DubeolsikConverter converter = new DubeolsikConverter();
     private final Set<String> complete = new HashSet<>();
     private final Set<String> prefixes = new HashSet<>();
+    private final Set<String> honorifics = new HashSet<>();
     private final NgramScorer scorer;
     public AttachedParticleMatcher(DictionaryLoader.Data data) {
         this.data = data;
@@ -16,6 +17,10 @@ public final class AttachedParticleMatcher {
             "도", "만", "한테", "에게", "까지", "부터", "처럼", "보다", "랑", "이랑", "하고"));
         for (String base : List.of("에", "에서", "로", "으로", "한테", "에게", "까지", "부터", "처럼", "보다"))
             for (String tail : List.of("는", "도", "만")) particles.add(base + tail);
+        for (String tail : List.of("", "은", "이", "을", "께", "께서", "께서는", "께도", "도", "만", "한테", "에게", "과", "처럼")) {
+            particles.add("님" + tail);
+            honorifics.add(converter.toKeys("님" + tail));
+        }
         for (String particle : particles) {
             String keys = converter.toKeys(particle);
             complete.add(keys);
@@ -28,12 +33,15 @@ public final class AttachedParticleMatcher {
         if (data.english().containsKey(lower) || data.protectedWords().contains(lower)) return Optional.empty();
         for (int split = raw.length() - 1; split >= 2; split--) {
             String base = raw.substring(0, split).toLowerCase(Locale.ROOT);
+            String suffix = raw.substring(split);
+            boolean honorific = honorifics.contains(suffix);
+            boolean nickname = honorific && base.matches("[a-z]{3,32}")
+                && !converter.convert(raw.substring(0, split)).chars().allMatch(c -> c >= 0xAC00 && c <= 0xD7A3);
             int rank = data.english().getOrDefault(base, 0);
             if (!data.protectedWords().contains(base) && !(rank > 0 && rank <= 20000)
-                && !compoundEnglish(base) && !unlistedName(raw.substring(0, split), raw)) continue;
-            String suffix = raw.substring(split);
+                && !compoundEnglish(base) && !unlistedName(raw.substring(0, split), raw) && !nickname) continue;
             if (prefixes.contains(suffix))
-                return Optional.of(new Match(raw.substring(0, split) + converter.convert(suffix), split, complete.contains(suffix)));
+                return Optional.of(new Match(raw.substring(0, split) + converter.convert(suffix), split, complete.contains(suffix), honorific));
         }
         return Optional.empty();
     }

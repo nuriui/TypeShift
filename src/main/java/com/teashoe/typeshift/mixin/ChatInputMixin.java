@@ -68,6 +68,7 @@ public abstract class ChatInputMixin {
     }
     @Inject(method = {"insertText", "setValue"}, at = @At("HEAD"))
     private void typeshift$externalText(String text, CallbackInfo ci) {
+        if (text.isEmpty() && typeshift$box().getValue().isEmpty()) return;
         var controller = typeshift$active();
         if (controller != null && !typeshift$typing && typeshift$deletionDepth == 0 && !controller.replacements().modifying()) controller.external(InputController.Source.EXTERNAL);
     }
